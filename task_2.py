@@ -1,7 +1,7 @@
 import cv2 as cv
 import numpy as np
 
-img = cv.imread("Gesture-Control/task_2.jpg")
+img = cv.imread("Gesture-Control/task_2.jpeg")
 cv.imshow('image',img)
 
 gray_scale = cv.cvtColor(img,cv.COLOR_BGR2GRAY)
