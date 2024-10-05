@@ -12,3 +12,6 @@ Noise in the image was the main challenge
 
 #Solution 
 Fixed using applying Gaussian blur
+
+*Master Branch contains the most updated code*
+
