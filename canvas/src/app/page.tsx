@@ -1,5 +1,6 @@
-"use client";
+"use client"
 import React, { useState, useRef, useEffect, MouseEvent } from "react";
+import { GestureRecognizer, FilesetResolver } from "@mediapipe/tasks-vision";
 import {
   FiLock,
   FiMove,
@@ -11,11 +12,14 @@ import {
   FiEdit3,
   FiImage,
   FiCpu,
+  FiSave,
+  FiLayers,
 } from "react-icons/fi";
 import { TbTextResize, TbPalette, TbEraser } from "react-icons/tb";
 import { ChromePicker } from "react-color";
 
 type Shape = {
+  id: string;
   type: string;
   x?: number;
   y?: number;
@@ -32,6 +36,7 @@ type Shape = {
   color?: string;
   img?: HTMLImageElement;
   locked?: boolean;
+  layer: number;
 };
 
 const Container = ({ children }: { children: React.ReactNode }) => (
@@ -95,8 +100,25 @@ const App = () => {
   const [currentColor, setCurrentColor] = useState("#ffffff");
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [history, setHistory] = useState<Shape[][]>([]); // History for undo functionality
+  const [currentLayer, setCurrentLayer] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const [gestureRecognizer, setGestureRecognizer] = useState<any>(null);
+
+  useEffect(() => {
+    const loadMediaPipe = async () => {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
+      );
+      const recognizer = await GestureRecognizer.createFromModelPath(
+        vision,
+        "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task"
+      );
+      setGestureRecognizer(recognizer);
+    };
+
+    loadMediaPipe();
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -110,6 +132,57 @@ const App = () => {
       }
     }
   }, [shapes, currentColor]);
+
+  useEffect(() => {
+    if (gestureRecognizer) {
+      const video = document.createElement("video");
+      video.width = 640;
+      video.height = 480;
+
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then((stream) => {
+          video.srcObject = stream;
+          video.play();
+          detectGestures(video);
+        })
+        .catch((err) => console.error("Error accessing webcam:", err));
+    }
+  }, [gestureRecognizer]);
+
+  const detectGestures = async (video: HTMLVideoElement) => {
+    const detectFrame = async () => {
+      if (gestureRecognizer) {
+        const results = await gestureRecognizer.recognize(video);
+        if (results.gestures.length > 0) {
+          handleGesture(results.gestures[0][0].categoryName);
+        }
+      }
+      requestAnimationFrame(detectFrame);
+    };
+    detectFrame();
+  };
+
+  const handleGesture = (gesture: string) => {
+    switch (gesture) {
+      case "Closed_Fist":
+        handleToolChange("move");
+        break;
+      case "Open_Palm":
+        handleToolChange("pointer");
+        break;
+      case "Thumb_Up":
+        handleUndo();
+        break;
+      case "Victory":
+        handleToolChange("rectangle");
+        break;
+      case "Pointing_Up":
+        handleToolChange("circle");
+        break;
+      // Add more gesture handlers as needed
+    }
+  };
+
 
   const redrawCanvas = () => {
     const ctx = ctxRef.current;
