@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useRef, useEffect, MouseEvent } from "react";
+import { useGestureControls } from "./gestureControl";
 import {
   FiLock,
   FiMove,
@@ -9,12 +10,10 @@ import {
   FiTriangle,
   FiArrowRight,
   FiEdit3,
-  FiImage,
-  FiCpu,
 } from "react-icons/fi";
-import { TbTextResize, TbPalette, TbEraser } from "react-icons/tb";
+import { TbTextResize, TbPalette, TbEraser,TbPencil } from "react-icons/tb";
 import { ChromePicker } from "react-color";
-
+import { GestureRecognizer, FilesetResolver } from "@mediapipe/tasks-vision";
 type Shape = {
   type: string;
   x?: number;
@@ -32,6 +31,8 @@ type Shape = {
   color?: string;
   img?: HTMLImageElement;
   locked?: boolean;
+  points?: Point[]; // For pencil strokes
+  lineWidth?: number; 
 };
 
 const Container = ({ children }: { children: React.ReactNode }) => (
@@ -57,7 +58,7 @@ const IconButton = ({
 }) => (
   <button
     className={`bg-gray-700 hover:bg-gray-600 p-2 rounded ${
-      active ? "bg-gray-600" : ""
+      active ? "bg-amber-500" : ""
     }`}
     onClick={onClick}
     style={style}
@@ -89,6 +90,7 @@ Canvas.displayName = "Canvas";
 const App = () => {
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [selectedShape, setSelectedShape] = useState<Shape | null>(null);
@@ -97,6 +99,9 @@ const App = () => {
   const [history, setHistory] = useState<Shape[][]>([]); // History for undo functionality
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const [lineWidth, setLineWidth] = useState(2);
+  const [currentPath, setCurrentPath] = useState<Point[]>([]);
+  
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -111,6 +116,13 @@ const App = () => {
     }
   }, [shapes, currentColor]);
 
+   // Add shapes to history when they change
+   useEffect(() => {
+    if (shapes.length > 0) {
+      setHistory(prev => [...prev, [...shapes]]);
+    }
+  }, [shapes]);
+
   const redrawCanvas = () => {
     const ctx = ctxRef.current;
     if (ctx) {
@@ -120,8 +132,166 @@ const App = () => {
           drawShape(ctx, shape);
         }
       });
+
+      // Highlight selected shape
+      if (selectedShape) {
+        const shape = shapes.find(s => s === selectedShape);
+        if (shape) {
+          ctx.strokeStyle = '#00ff00';
+          ctx.lineWidth = 2;
+          drawSelectionBox(ctx, shape);
+        }
+      }
     }
   };
+
+  //draw selection box
+
+  const drawSelectionBox = (ctx: CanvasRenderingContext2D, shape: Shape) => {
+    ctx.strokeStyle = '#00ff00'; // Selection highlight color
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 3]); // Create dashed line effect for selection
+  
+    switch (shape.type) {
+      case "rectangle":
+        // Draw dashed rectangle around the shape with padding
+        ctx.strokeRect(
+          shape.x! - 4, 
+          shape.y! - 4, 
+          shape.width! + 8, 
+          shape.height! + 8
+        );
+        // Draw resize handles
+        drawResizeHandles(ctx, shape.x!, shape.y!, shape.width!, shape.height!);
+        break;
+  
+      case "circle":
+        // Draw dashed circle around the shape with padding
+        ctx.beginPath();
+        ctx.arc(shape.x!, shape.y!, shape.radius! + 4, 0, Math.PI * 2);
+        ctx.stroke();
+        // Draw center point
+        drawCenterPoint(ctx, shape.x!, shape.y!);
+        break;
+  
+      case "triangle":
+        // Draw dashed outline around triangle
+        ctx.beginPath();
+        // Calculate bounding box
+        const minX = Math.min(shape.x1!, shape.x2!, shape.x3!) - 4;
+        const minY = Math.min(shape.y1!, shape.y2!, shape.y3!) - 4;
+        const maxX = Math.max(shape.x1!, shape.x2!, shape.x3!) + 4;
+        const maxY = Math.max(shape.y1!, shape.y2!, shape.y3!) + 4;
+        // Draw selection rectangle
+        ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+        // Draw vertices
+        drawVertexHandles(ctx, [
+          { x: shape.x1!, y: shape.y1! },
+          { x: shape.x2!, y: shape.y2! },
+          { x: shape.x3!, y: shape.y3! }
+        ]);
+        break;
+  
+      case "arrow":
+        // Draw dashed line parallel to arrow
+        ctx.beginPath();
+        ctx.moveTo(shape.x1! - 4, shape.y1! - 4);
+        ctx.lineTo(shape.x2! + 4, shape.y2! + 4);
+        ctx.stroke();
+        // Draw endpoint handles
+        drawEndpointHandles(ctx, shape.x1!, shape.y1!, shape.x2!, shape.y2!);
+        break;
+  
+      case "text":
+        // Get text metrics
+        ctx.font = "20px Arial";
+        const metrics = ctx.measureText(shape.text!);
+        // Draw dashed rectangle around text
+        ctx.strokeRect(
+          shape.x! - 4,
+          shape.y! - 24, // Adjust for text height
+          metrics.width + 8,
+          28 // Approximate text height + padding
+        );
+        break;
+  
+      case "image":
+        // Draw dashed rectangle around image
+        if (shape.img) {
+          ctx.strokeRect(
+            shape.x! - 4,
+            shape.y! - 4,
+            shape.img.width + 8,
+            shape.img.height + 8
+          );
+          drawResizeHandles(ctx, shape.x!, shape.y!, shape.img.width, shape.img.height);
+        }
+        break;
+    }
+  
+    // Reset line style
+    ctx.setLineDash([]);
+  };
+  
+  // Helper function to draw resize handles
+  const drawResizeHandles = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number) => {
+    const handleSize = 8;
+    const handles = [
+      { x: x - handleSize/2, y: y - handleSize/2 }, // Top-left
+      { x: x + width/2 - handleSize/2, y: y - handleSize/2 }, // Top-middle
+      { x: x + width - handleSize/2, y: y - handleSize/2 }, // Top-right
+      { x: x - handleSize/2, y: y + height/2 - handleSize/2 }, // Middle-left
+      { x: x + width - handleSize/2, y: y + height/2 - handleSize/2 }, // Middle-right
+      { x: x - handleSize/2, y: y + height - handleSize/2 }, // Bottom-left
+      { x: x + width/2 - handleSize/2, y: y + height - handleSize/2 }, // Bottom-middle
+      { x: x + width - handleSize/2, y: y + height - handleSize/2 } // Bottom-right
+    ];
+  
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#00ff00';
+    handles.forEach(handle => {
+      ctx.fillRect(handle.x, handle.y, handleSize, handleSize);
+      ctx.strokeRect(handle.x, handle.y, handleSize, handleSize);
+    });
+  };
+  
+  // Helper function to draw vertex handles for triangle
+  const drawVertexHandles = (ctx: CanvasRenderingContext2D, vertices: Array<{x: number, y: number}>) => {
+    const handleSize = 8;
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#00ff00';
+    
+    vertices.forEach(vertex => {
+      ctx.fillRect(vertex.x - handleSize/2, vertex.y - handleSize/2, handleSize, handleSize);
+      ctx.strokeRect(vertex.x - handleSize/2, vertex.y - handleSize/2, handleSize, handleSize);
+    });
+  };
+  
+  // Helper function to draw endpoint handles for arrows
+  const drawEndpointHandles = (ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) => {
+    const handleSize = 8;
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#00ff00';
+    
+    // Start point handle
+    ctx.fillRect(x1 - handleSize/2, y1 - handleSize/2, handleSize, handleSize);
+    ctx.strokeRect(x1 - handleSize/2, y1 - handleSize/2, handleSize, handleSize);
+    
+    // End point handle
+    ctx.fillRect(x2 - handleSize/2, y2 - handleSize/2, handleSize, handleSize);
+    ctx.strokeRect(x2 - handleSize/2, y2 - handleSize/2, handleSize, handleSize);
+  };
+  
+  // Helper function to draw center point for circles
+  const drawCenterPoint = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
+    const handleSize = 8;
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#00ff00';
+    
+    ctx.fillRect(x - handleSize/2, y - handleSize/2, handleSize, handleSize);
+    ctx.strokeRect(x - handleSize/2, y - handleSize/2, handleSize, handleSize);
+  };
+
 
   const drawShape = (ctx: CanvasRenderingContext2D, shape: Shape) => {
     ctx.strokeStyle = shape.color || currentColor;
@@ -129,6 +299,16 @@ const App = () => {
     ctx.fillStyle = `${shape.color || currentColor}33`;
 
     switch (shape.type) {
+      case "pencil":
+        if (shape.points && shape.points.length > 0) {
+          ctx.beginPath();
+          ctx.moveTo(shape.points[0].x, shape.points[0].y);
+          for (let i = 1; i < shape.points.length; i++) {
+            ctx.lineTo(shape.points[i].x, shape.points[i].y);
+          }
+          ctx.stroke();
+        }
+        break;
       case "rectangle":
         ctx.strokeRect(shape.x!, shape.y!, shape.width!, shape.height!);
         ctx.fillRect(shape.x!, shape.y!, shape.width!, shape.height!);
@@ -156,18 +336,13 @@ const App = () => {
         ctx.fillStyle = shape.color || currentColor;
         ctx.fillText(shape.text!, shape.x!, shape.y!);
         break;
-      case "image":
-        if (shape.img) {
-          ctx.drawImage(shape.img, shape.x!, shape.y!);
-        }
-        break;
-      case "cpu":
-        // Mocked CPU tool functionality
-        break;
+
+
       default:
         break;
     }
   };
+
 
   const drawArrow = (ctx: CanvasRenderingContext2D, fromx: number, fromy: number, tox: number, toy: number, color: string) => {
     const headlen = 10;
@@ -189,7 +364,11 @@ const App = () => {
     const { offsetX, offsetY } = e.nativeEvent;
     setStartPos({ x: offsetX, y: offsetY });
 
-    if (activeTool === "pointer") {
+    if (activeTool === "pencil") {
+      setIsDrawing(true);
+      setCurrentPath([{ x: offsetX, y: offsetY }]);
+    }
+    else if (activeTool === "pointer") {
       const clickedShape = shapes.find((shape) =>
         isPointInShape(shape, offsetX, offsetY)
       );
@@ -201,29 +380,69 @@ const App = () => {
     if (!isDrawing) return;
 
     const { offsetX, offsetY } = e.nativeEvent;
-
-    if (activeTool === "move" && selectedShape) {
+    if (isDrawing && activeTool === "pencil") {
+      setCurrentPath(prev => [...prev, { x: offsetX, y: offsetY }]);
+      
+      // Draw the current stroke
+      const ctx = ctxRef.current;
+      if (ctx) {
+        ctx.strokeStyle = currentColor;
+        ctx.lineWidth = lineWidth;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        
+        // Redraw the canvas
+        redrawCanvas();
+        
+        // Draw the current path
+        ctx.beginPath();
+        ctx.moveTo(currentPath[0].x, currentPath[0].y);
+        currentPath.forEach(point => {
+          ctx.lineTo(point.x, point.y);
+        });
+        ctx.lineTo(offsetX, offsetY);
+        ctx.stroke();
+      }
+    } else if (isDragging && selectedShape) {
       const dx = offsetX - startPos.x;
       const dy = offsetY - startPos.y;
-      setShapes(
-        shapes.map((shape) =>
+      
+      setShapes(prevShapes =>
+        prevShapes.map((shape) =>
           shape === selectedShape ? moveShape(shape, dx, dy) : shape
         )
       );
       setStartPos({ x: offsetX, y: offsetY });
+    } else if (isDrawing && activeTool !== "pointer" && activeTool !== "pencil") {
+      redrawCanvas();
+      const ctx = ctxRef.current;
+      if (ctx) {
+        drawPreview(ctx, activeTool, startPos, { x: offsetX, y: offsetY });
+      }
     }
   };
 
   const handleMouseUp = (e: MouseEvent<HTMLCanvasElement>) => {
     setIsDrawing(false);
     const { offsetX, offsetY } = e.nativeEvent;
+    if (isDrawing && activeTool === "pencil" && currentPath.length > 0) {
+      const newShape: Shape = {
+        type: "pencil",
+        points: [...currentPath, { x: offsetX, y: offsetY }],
+        color: currentColor,
+        lineWidth: lineWidth
+      };
+      setShapes(prev => [...prev, newShape]);
+      setCurrentPath([]);
+    } else if (isDragging) {
+      setIsDragging(false);
+    } else if (isDrawing) {
+      let newShape: Shape | null = null;
 
     if (activeTool === "erase") {
       setShapes(shapes.filter(shape => !isPointInShape(shape, offsetX, offsetY)));
       return;
     }
-
-    let newShape: Shape | null = null;
 
     if (activeTool === "rectangle") {
       const width = offsetX - startPos.x;
@@ -262,12 +481,13 @@ const App = () => {
       img.src = "https://via.placeholder.com/150";
       newShape = { type: "image", x: offsetX, y: offsetY, img, color: currentColor };
     }
-
     if (newShape) {
-      setShapes([...shapes, newShape]);
+      setShapes(prev => [...prev, newShape]);
     }
+  }
 
-    redrawCanvas();
+  setIsDrawing(false);
+  redrawCanvas();
   };
 
   const isPointInShape = (shape: Shape, x: number, y: number) => {
@@ -275,6 +495,50 @@ const App = () => {
     if (!ctx) return false;
 
     switch (shape.type) {
+      case "pencil":
+        if (!shape.points) return false;
+        
+        // Check if point is near any point in the path
+        const threshold = 5; // Detection threshold in pixels
+        return shape.points.some((point, i) => {
+          if (i === 0) return false;
+          
+          // Check if point is near the line segment
+          const x1 = shape.points![i - 1].x;
+          const y1 = shape.points![i - 1].y;
+          const x2 = point.x;
+          const y2 = point.y;
+          
+          // Calculate distance from point to line segment
+          const A = x - x1;
+          const B = y - y1;
+          const C = x2 - x1;
+          const D = y2 - y1;
+          
+          const dot = A * C + B * D;
+          const len_sq = C * C + D * D;
+          let param = -1;
+          
+          if (len_sq !== 0) param = dot / len_sq;
+          
+          let xx, yy;
+          
+          if (param < 0) {
+            xx = x1;
+            yy = y1;
+          } else if (param > 1) {
+            xx = x2;
+            yy = y2;
+          } else {
+            xx = x1 + param * C;
+            yy = y1 + param * D;
+          }
+          
+          const dx = x - xx;
+          const dy = y - yy;
+          
+          return Math.sqrt(dx * dx + dy * dy) < threshold;
+        });
       case "rectangle":
         return (
           x >= shape.x! &&
@@ -316,19 +580,21 @@ const App = () => {
           y >= shape.y! - 20 &&
           y <= shape.y!
         );
-      case "image":
-        return (
-          x >= shape.x! &&
-          x <= shape.x! + (shape.img?.width || 0) &&
-          y >= shape.y! &&
-          y <= shape.y! + (shape.img?.height || 0)
-        );
       default:
         return false;
     }
   };
 
   const moveShape = (shape: Shape, dx: number, dy: number): Shape => {
+    if (shape.type === "pencil") {
+      return {
+        ...shape,
+        points: shape.points!.map(point => ({
+          x: point.x + dx,
+          y: point.y + dy
+        }))
+      };
+    }
     if (shape.type === "rectangle") {
       return { ...shape, x: shape.x! + dx, y: shape.y! + dy };
     } else if (shape.type === "circle") {
@@ -367,26 +633,55 @@ const App = () => {
   };
 
   const handleUndo = () => {
-    const newHistory = [...history];
-    const previousShapes = newHistory.pop();
-    if (previousShapes) {
-      setShapes(previousShapes);
+    if (history.length > 1) {
+      const newHistory = [...history];
+      newHistory.pop(); // Remove current state
+      const previousShapes = newHistory[newHistory.length - 1];
+      setShapes([...previousShapes]);
       setHistory(newHistory);
-      redrawCanvas();
+    } else {
+      setShapes([]);
     }
   };
 
-  const handleColorChange = (color: string) => {
-    setCurrentColor(color);
-    setShowColorPicker(false);
+  const handleColorChange = (color: any) => {
+    setCurrentColor(color.hex);
   };
 
+  const { initializeGestureControls } = useGestureControls(
+    setActiveTool,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp
+  );
+  
+  useEffect(() => {
+    initializeGestureControls();
+  }, [])
+
   return (
+  
     <Container>
       <Toolbar>
         <IconButton active={activeTool === "pointer"} onClick={() => handleToolChange("pointer")}>
           <FiMove />
         </IconButton>
+        <IconButton active={activeTool === "pencil"} onClick={() => handleToolChange("pencil")}>
+          <TbPencil />
+        </IconButton>
+        {/* Add line width control for pencil */}
+        {activeTool === "pencil" && (
+          <select 
+            value={lineWidth} 
+            onChange={(e) => setLineWidth(Number(e.target.value))}
+            className="bg-gray-700 text-white p-2 rounded"
+          >
+            <option value="1">Thin</option>
+            <option value="2">Normal</option>
+            <option value="4">Thick</option>
+            <option value="6">Very Thick</option>
+          </select>
+        )}
         <IconButton active={activeTool === "rectangle"} onClick={() => handleToolChange("rectangle")}>
           <FiSquare />
         </IconButton>
@@ -400,23 +695,27 @@ const App = () => {
           <FiArrowRight />
         </IconButton>
         <IconButton active={activeTool === "text"} onClick={() => handleToolChange("text")}>
-          <FiEdit3 />
-        </IconButton>
-        <IconButton active={activeTool === "image"} onClick={() => handleToolChange("image")}>
-          <FiImage />
-        </IconButton>
-        <IconButton active={activeTool === "cpu"} onClick={() => handleToolChange("cpu")}>
-          <FiCpu />
+          <TbTextResize />
         </IconButton>
         <IconButton active={activeTool === "erase"} onClick={() => handleToolChange("erase")}>
           <TbEraser />
         </IconButton>
         <IconButton active={showColorPicker} onClick={() => setShowColorPicker(!showColorPicker)}>
-          <TbPalette />
+          <TbPalette style={{ color: currentColor }} />
         </IconButton>
         {showColorPicker && (
-          <div className="absolute top-14 left-2">
-            <ChromePicker color={currentColor} onChangeComplete={(color) => handleColorChange(color.hex)} />
+          <div className="absolute z-10 top-16">
+            <div 
+              className="fixed inset-0" 
+              onClick={() => setShowColorPicker(false)}
+            />
+            <div className="relative">
+              <ChromePicker 
+                color={currentColor}
+                onChange={handleColorChange}
+                disableAlpha={true}
+              />
+            </div>
           </div>
         )}
         <IconButton onClick={handleUndo}>
@@ -428,6 +727,7 @@ const App = () => {
         <HintText>Press 'Undo' to revert the last action.</HintText>
       </CanvasArea>
     </Container>
+    
   );
 };
 
