@@ -1,5 +1,48 @@
 import { GestureRecognizer, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision";
 
+// Setup camera types and exports
+interface CameraSetup {
+  video: HTMLVideoElement;
+  canvas: HTMLCanvasElement;
+}
+
+// Types for gesture handling
+export interface GestureAction {
+  tool?: string;
+  action?: string;
+}
+
+interface DrawingState {
+  isDrawing: boolean;
+  lastX: number;
+  lastY: number;
+  currentShape: Shape | null;
+  startX: number;
+  startY: number;
+  shapes: Shape[];  // Store all shapes
+}
+
+interface Shape {
+  type: string;
+  points?: { x: number; y: number }[];
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  radius?: number;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+  x3?: number;
+  y3?: number;
+  text?: string;
+  color?: string;
+}
+
+
+export type GestureHandler = (gesture: string, handedness: string, x: number, y: number) => void;
+
 export const setupCamera = async (): Promise<[HTMLVideoElement, HTMLCanvasElement]> => {
   console.log("Setting up camera and canvas...");
   
@@ -9,7 +52,6 @@ export const setupCamera = async (): Promise<[HTMLVideoElement, HTMLCanvasElemen
     existingContainer.remove();
   }
 
-  // Create container div
   const container = document.createElement("div");
   container.id = "gesture-container";
   container.style.position = "fixed";
@@ -21,7 +63,6 @@ export const setupCamera = async (): Promise<[HTMLVideoElement, HTMLCanvasElemen
   container.style.overflow = "hidden";
   container.style.zIndex = "1000";
   
-  // Setup video with proper containment
   const video = document.createElement("video");
   video.id = "gesture-video";
   video.style.position = "absolute";
@@ -33,7 +74,6 @@ export const setupCamera = async (): Promise<[HTMLVideoElement, HTMLCanvasElemen
   video.style.objectFit = "cover";
   video.style.zIndex = "1001";
   
-  // Create a separate canvas container
   const canvasContainer = document.createElement("div");
   canvasContainer.style.position = "absolute";
   canvasContainer.style.top = "0";
@@ -41,21 +81,18 @@ export const setupCamera = async (): Promise<[HTMLVideoElement, HTMLCanvasElemen
   canvasContainer.style.width = "100%";
   canvasContainer.style.height = "100%";
   canvasContainer.style.zIndex = "1002";
-  canvasContainer.style.border = "3px solid lime";
-  canvasContainer.style.pointerEvents = "none";
   
-  // Setup canvas with explicit dimensions
   const canvas = document.createElement("canvas");
   canvas.id = "gesture-canvas";
+  canvas.width = 320;
+  canvas.height = 240;
   canvas.style.position = "absolute";
   canvas.style.top = "0";
   canvas.style.left = "0";
   canvas.style.width = "100%";
   canvas.style.height = "100%";
   canvas.style.transform = "scaleX(-1)";
-  canvas.style.pointerEvents = "none";
   
-  // Setup gesture label
   const gestureLabel = document.createElement("div");
   gestureLabel.id = "gesture-label";
   gestureLabel.style.position = "absolute";
@@ -67,37 +104,32 @@ export const setupCamera = async (): Promise<[HTMLVideoElement, HTMLCanvasElemen
   gestureLabel.style.padding = "8px";
   gestureLabel.style.textAlign = "center";
   gestureLabel.style.fontSize = "16px";
-  gestureLabel.style.fontWeight = "bold";
   gestureLabel.style.zIndex = "1003";
   gestureLabel.textContent = "Initializing...";
 
-  // Add elements to containers
+  // Create drawing canvas
+  const drawingCanvas = document.createElement("canvas");
+  drawingCanvas.id = "drawing-canvas";
+  drawingCanvas.width = window.innerWidth;
+  drawingCanvas.height = window.innerHeight;
+  drawingCanvas.style.position = "fixed";
+  drawingCanvas.style.top = "0";
+  drawingCanvas.style.left = "0";
+  drawingCanvas.style.zIndex = "999";
+  drawingCanvas.style.pointerEvents = "none";
+
   canvasContainer.appendChild(canvas);
   container.appendChild(video);
   container.appendChild(canvasContainer);
   container.appendChild(gestureLabel);
   document.body.appendChild(container);
-
-  // Add debug overlay
-  const debugOverlay = document.createElement("div");
-  debugOverlay.style.position = "absolute";
-  debugOverlay.style.top = "0";
-  debugOverlay.style.left = "0";
-  debugOverlay.style.width = "100%";
-  debugOverlay.style.padding = "4px";
-  debugOverlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
-  debugOverlay.style.color = "white";
-  debugOverlay.style.fontSize = "12px";
-  debugOverlay.style.zIndex = "1004";
-  debugOverlay.id = "debug-overlay";
-  container.appendChild(debugOverlay);
+  document.body.appendChild(drawingCanvas);
 
   try {
-    console.log("Requesting camera access...");
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { 
-        width: { ideal: 640 },
-        height: { ideal: 480 },
+        width: { ideal: 320 },
+        height: { ideal: 240 },
         facingMode: "user"
       },
       audio: false
@@ -105,22 +137,6 @@ export const setupCamera = async (): Promise<[HTMLVideoElement, HTMLCanvasElemen
     
     video.srcObject = stream;
     await video.play();
-    
-    // Set canvas dimensions after video is playing
-    await new Promise<void>((resolve) => {
-      video.onloadedmetadata = () => {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        console.log(`Canvas dimensions set to: ${canvas.width}x${canvas.height}`);
-        
-        // Update debug overlay
-        const debugOverlay = document.getElementById("debug-overlay");
-        if (debugOverlay) {
-          debugOverlay.textContent = `Video: ${video.videoWidth}x${video.videoHeight}, Canvas: ${canvas.width}x${canvas.height}`;
-        }
-        resolve();
-      };
-    });
 
     return [video, canvas];
   } catch (error) {
@@ -130,76 +146,187 @@ export const setupCamera = async (): Promise<[HTMLVideoElement, HTMLCanvasElemen
 };
 
 export const processFrame = async (
-    gestureRecognizer: GestureRecognizer,
-    video: HTMLVideoElement,
-    canvas: HTMLCanvasElement,
-    onGestureDetected: (gesture: string, handedness: string, x: number, y: number) => void
-  ) => {
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) {
-      console.error("Could not get canvas context");
-      return;
-    }
+  gestureRecognizer: GestureRecognizer,
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  onGestureDetected: GestureHandler,
+  currentTool: string = 'pencil',
+  currentColor: string = '#FF0000'
+) => {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const drawingUtils = new DrawingUtils(ctx);
   
-    const drawingUtils = new DrawingUtils(ctx);
-  
-    const detectGestures = async () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-  
-      try {
-        const results = await gestureRecognizer.recognizeForVideo(video, Date.now());
-  
-        if (results.landmarks) {
-          for (const landmarks of results.landmarks) {
-            drawingUtils.drawConnectors(
-              landmarks,
-              GestureRecognizer.HAND_CONNECTIONS,
-              { color: "#00FF00", lineWidth: 5 }
-            );
-  
-            drawingUtils.drawLandmarks(landmarks, {
-              color: "#FF0000", lineWidth: 2, radius: 8, fillColor: "#FFFFFF"
-            });
-          }
-        }
-  
-        const label = document.getElementById("gesture-label");
-        if (results.gestures.length > 0) {
-          const gesture = results.gestures[0][0].categoryName;
-          if (label) {
-            label.textContent = `Detected: ${gesture}`;
-          }
-  
-          if (results.landmarks.length > 0) {
-            const handedness = results.handedness[0][0].categoryName;
-            const landmarks = results.landmarks[0];
-            const x = landmarks[8].x * window.innerWidth;
-            const y = landmarks[8].y * window.innerHeight;
-            onGestureDetected(gesture, handedness, x, y);
-          }
-        } else {
-          if (label) {
-            label.textContent = "No gesture detected";
-          }
-        }
-      } catch (error) {
-        console.error("Error in frame processing:", error);
-      }
-  
-      requestAnimationFrame(detectGestures);
-    };
-  
-    detectGestures();
+  // Initialize drawing state with additional properties
+  const drawingState: DrawingState = {
+    isDrawing: false,
+    lastX: 0,
+    lastY: 0,
+    currentShape: null,
+    startX: 0,
+    startY: 0
   };
-  
-// Initialize MediaPipe with debug logging
+
+  // Get drawing canvas context
+  const drawingCanvas = document.getElementById('drawing-canvas') as HTMLCanvasElement;
+  const drawingCtx = drawingCanvas.getContext('2d');
+
+  const drawShape = (ctx: CanvasRenderingContext2D, shape: Shape) => {
+    ctx.strokeStyle = shape.color || currentColor;
+    ctx.lineWidth = 2;
+    ctx.fillStyle = `${shape.color || currentColor}33`;
+
+    switch (shape.type) {
+      case "pencil":
+        if (shape.points && shape.points.length > 0) {
+          ctx.beginPath();
+          ctx.moveTo(shape.points[0].x, shape.points[0].y);
+          for (let i = 1; i < shape.points.length; i++) {
+            ctx.lineTo(shape.points[i].x, shape.points[i].y);
+          }
+          ctx.stroke();
+        }
+        break;
+      case "rectangle":
+        const width = shape.x2! - shape.x1!;
+        const height = shape.y2! - shape.y1!;
+        ctx.strokeRect(shape.x1!, shape.y1!, width, height);
+        ctx.fillRect(shape.x1!, shape.y1!, width, height);
+        break;
+      case "circle":
+        const radius = Math.sqrt(
+          Math.pow(shape.x2! - shape.x1!, 2) + Math.pow(shape.y2! - shape.y1!, 2)
+        );
+        ctx.beginPath();
+        ctx.arc(shape.x1!, shape.y1!, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fill();
+        break;
+      case "triangle":
+        ctx.beginPath();
+        ctx.moveTo(shape.x1!, shape.y1!);
+        ctx.lineTo(shape.x2!, shape.y2!);
+        ctx.lineTo(
+          shape.x1! + (shape.x2! - shape.x1!) / 2,
+          shape.y1! - Math.abs(shape.x2! - shape.x1!)
+        );
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fill();
+        break;
+    }
+  };
+
+  const detectGestures = async () => {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    try {
+      const results = await gestureRecognizer.recognizeForVideo(video, performance.now());
+      
+      if (results.landmarks) {
+        for (const landmarks of results.landmarks) {
+          drawingUtils.drawConnectors(
+            landmarks,
+            GestureRecognizer.HAND_CONNECTIONS,
+            { color: "#00FF00", lineWidth: 2 }
+          );
+          drawingUtils.drawLandmarks(landmarks, {
+            color: "#FF0000",
+            lineWidth: 1,
+            radius: 4
+          });
+
+          // Get index finger tip position (landmark 8)
+          const indexTip = landmarks[8];
+          const x = indexTip.x * window.innerWidth;
+          const y = indexTip.y * window.innerHeight;
+
+          // Handle drawing based on current tool
+          if (drawingState.isDrawing && drawingCtx) {
+            if (!drawingState.currentShape) {
+              // Initialize new shape when starting to draw
+              drawingState.currentShape = {
+                type: currentTool,
+                x1: x,
+                y1: y,
+                color: currentColor,
+                points: currentTool === 'pencil' ? [{ x, y }] : undefined
+              };
+              drawingState.startX = x;
+              drawingState.startY = y;
+            } else {
+              // Update shape based on current position
+              switch (currentTool) {
+                case 'pencil':
+                  if (drawingState.currentShape.points) {
+                    drawingState.currentShape.points.push({ x, y });
+                  }
+                  break;
+                case 'rectangle':
+                case 'circle':
+                case 'triangle':
+                  drawingState.currentShape.x2 = x;
+                  drawingState.currentShape.y2 = y;
+                  break;
+              }
+
+              // Clear canvas and redraw shape
+              drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+              drawShape(drawingCtx, drawingState.currentShape);
+            }
+          }
+
+          drawingState.lastX = x;
+          drawingState.lastY = y;
+        }
+      }
+
+      if (results.gestures && results.gestures.length > 0) {
+        const gesture = results.gestures[0][0].categoryName;
+        const label = document.getElementById("gesture-label");
+        
+        // Toggle drawing mode based on gestures
+        if (gesture === "Pointing_Up" && !drawingState.isDrawing) {
+          drawingState.isDrawing = true;
+          drawingState.currentShape = null;
+          if (label) label.textContent = `Drawing Mode: ON (${currentTool})`;
+        } else if (gesture === "Open_Palm" && drawingState.isDrawing) {
+          drawingState.isDrawing = false;
+          drawingState.currentShape = null;
+          if (label) label.textContent = "Drawing Mode: OFF";
+        }
+
+        if (label) {
+          label.textContent = `Detected: ${gesture} (${results.gestures[0][0].score.toFixed(2)})${
+            drawingState.isDrawing ? ` - Drawing Mode: ON (${currentTool})` : ''
+          }`;
+        }
+
+        if (results.landmarks && results.landmarks.length > 0) {
+          const handedness = results.handedness[0][0].categoryName;
+          const landmarks = results.landmarks[0];
+          const x = landmarks[8].x * canvas.width;
+          const y = landmarks[8].y * canvas.height;
+          onGestureDetected(gesture, handedness, x, y);
+        }
+      }
+    } catch (error) {
+      console.error("Error in gesture recognition:", error);
+    }
+
+    requestAnimationFrame(detectGestures);
+  };
+
+  detectGestures();
+};
+
 export const initializeGestureRecognition = async (): Promise<GestureRecognizer> => {
   console.log("Initializing MediaPipe...");
   
   const vision = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
   );
-  console.log("FilesetResolver initialized");
   
   const gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
     baseOptions: {
@@ -207,112 +334,24 @@ export const initializeGestureRecognition = async (): Promise<GestureRecognizer>
       delegate: "GPU"
     },
     runningMode: "VIDEO",
-    numHands: 1
+    numHands: 1,
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5
   });
-  console.log("GestureRecognizer created");
 
   return gestureRecognizer;
 };
 
-// React hook with debug logging
-export const useGestureControls = (
-  setActiveTool: (tool: string) => void,
-  handleMouseDown: (e: any) => void,
-  handleMouseMove: (e: any) => void,
-  handleMouseUp: (e: any) => void
-) => {
-  const gestureState = {
-    isInitialized: false,
-    gestureRecognizer: null,
-    videoElement: null,
-    lastGesture: "",
-    drawingMode: false
-  };
-
-  const initializeGestureControls = async () => {
-    try {
-      console.log("Initializing gesture controls...");
-      
-      // Initialize gesture recognizer
-      gestureState.gestureRecognizer = await initializeGestureRecognition();
-      
-      // Setup camera and canvas
-      const [video, canvas] = await setupCamera();
-      gestureState.videoElement = video;
-      
-      // Wait for video to be ready
-      await new Promise((resolve) => {
-try {
-            if (gestureState.videoElement) {
-              gestureState.videoElement.onloadeddata = () => {
-                console.log("Video ready");
-                resolve(true);
-              };
-            }
-} catch (error) {
-    console.error("failed to get video ready")
-}
-      });
-
-      gestureState.isInitialized = true;
-      console.log("Gesture controls initialized");
-
-      const handleGesture = (gesture: string, handedness: string, x: number, y: number) => {
-        console.log(`Gesture detected: ${gesture}, Hand: ${handedness}, Position: (${x}, ${y})`);
-        
-        const action = mapGestureToAction(gesture, handedness, x, y);
-        if (!action) return;
-
-        if (action.tool !== undefined) {
-          setActiveTool(action.tool);
-        }
-
-        const eventInit = {
-          bubbles: true,
-          clientX: x,
-          clientY: y,
-          nativeEvent: { offsetX: x, offsetY: y }
-        };
-
-        if (gesture === "Closed_Fist" && !gestureState.drawingMode) {
-          gestureState.drawingMode = true;
-          handleMouseDown(new MouseEvent("mousedown", eventInit));
-        } else if (gesture === "Open_Palm" && gestureState.drawingMode) {
-          gestureState.drawingMode = false;
-          handleMouseUp(new MouseEvent("mouseup", eventInit));
-        } else if (gestureState.drawingMode) {
-          handleMouseMove(new MouseEvent("mousemove", eventInit));
-        }
-
-        gestureState.lastGesture = gesture;
-      };
-
-      if (gestureState.gestureRecognizer && gestureState.videoElement) {
-        processFrame(
-          gestureState.gestureRecognizer,
-          gestureState.videoElement,
-          canvas,
-          handleGesture
-        );
-      }
-    } catch (error) {
-      console.error("Error in initializeGestureControls:", error);
-    }
-  };
-
-  return { initializeGestureControls };
-};
-
-// Keep original mapGestureToAction function
 export const mapGestureToAction = (
   gesture: string,
   handedness: string,
   x: number,
   y: number
-) => {
-  const actions = {
+): GestureAction | null => {
+  const actions: Record<string, () => GestureAction> = {
     "Thumb_Up": () => ({
-      tool: "pointer",
+      tool: "pencil",
       action: "select"
     }),
     "Closed_Fist": () => ({
@@ -332,10 +371,75 @@ export const mapGestureToAction = (
       action: "draw"
     }),
     "Pointing_Up": () => ({
-      tool: "text",
-      action: "text"
+      tool: "pencil",
+      action: "startDrawing"
     })
   };
 
   return actions[gesture] ? actions[gesture]() : null;
+};
+export const useGestureControls = (
+  setActiveTool: (tool: string) => void,
+  handleMouseDown: (e: MouseEvent) => void,
+  handleMouseMove: (e: MouseEvent) => void,
+  handleMouseUp: (e: MouseEvent) => void
+) => {
+  const gestureState = {
+    isInitialized: false,
+    gestureRecognizer: null as GestureRecognizer | null,
+    videoElement: null as HTMLVideoElement | null,
+    lastGesture: "",
+    drawingMode: false
+  };
+
+  const initializeGestureControls = async () => {
+    try {
+      console.log("Initializing gesture controls...");
+      
+      gestureState.gestureRecognizer = await initializeGestureRecognition();
+      
+      const [video, canvas] = await setupCamera();
+      gestureState.videoElement = video;
+      
+      if (gestureState.gestureRecognizer && video) {
+        processFrame(
+          gestureState.gestureRecognizer,
+          video,
+          canvas,
+          (gesture: string, handedness: string, x: number, y: number) => {
+            console.log(`Gesture detected: ${gesture}, Hand: ${handedness}, Position: (${x}, ${y})`);
+            
+            const action = mapGestureToAction(gesture, handedness, x, y);
+            if (!action) return;
+
+            if (action.tool) {
+              setActiveTool(action.tool);
+            }
+
+            const eventInit = {
+              clientX: x,
+              clientY: y,
+              bubbles: true
+            };
+
+            if (gesture === "Closed_Fist" && !gestureState.drawingMode) {
+              gestureState.drawingMode = true;
+              handleMouseDown(new MouseEvent("mousedown", eventInit));
+            } else if (gesture === "Open_Palm" && gestureState.drawingMode) {
+              gestureState.drawingMode = false;
+              handleMouseUp(new MouseEvent("mouseup", eventInit));
+            } else if (gestureState.drawingMode) {
+              handleMouseMove(new MouseEvent("mousemove", eventInit));
+            }
+
+            gestureState.lastGesture = gesture;
+          }
+        );
+      }
+    } catch (error) {
+      console.error("Error in initializeGestureControls:", error);
+    }
+  };
+
+  return { initializeGestureControls };
 };

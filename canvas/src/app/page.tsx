@@ -57,8 +57,8 @@ const IconButton = ({
   style?: React.CSSProperties;
 }) => (
   <button
-    className={`bg-gray-700 hover:bg-gray-600 p-2 rounded ${
-      active ? "bg-amber-500" : ""
+    className={` hover:bg-gray-600 p-2 rounded ${
+      active ? "bg-amber-500" : "bg-gray-700"
     }`}
     onClick={onClick}
     style={style}
