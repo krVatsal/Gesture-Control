@@ -415,10 +415,7 @@ const App = () => {
       setStartPos({ x: offsetX, y: offsetY });
     } else if (isDrawing && activeTool !== "pointer" && activeTool !== "pencil") {
       redrawCanvas();
-      const ctx = ctxRef.current;
-      if (ctx) {
-        drawPreview(ctx, activeTool, startPos, { x: offsetX, y: offsetY });
-      }
+
     }
   };
 

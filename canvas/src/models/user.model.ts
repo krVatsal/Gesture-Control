@@ -1,40 +1,38 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
+// Message Interface
 export interface Message extends Document {
   content: string;
   createdAt: Date;
 }
 
-const MessageSchema: Schema<Message> = new mongoose.Schema({
-  content: {
-    type: String,
-    required: true,
-  },
-  createdAt: {
-    type: Date,
-    required: true,
-    default: Date.now,
-  },
-});
-
+// User Interface
 export interface User extends Document {
-  username: string;
+  firstName: string;
+  lastName?: string;
   email: string;
-  password: string;
-  verifyCode: string;
-  verifyCodeExpiry: Date; 
-  isVerified: boolean;
-  isAcceptingMessages: boolean;
-  messages: Message[];
+  // password: string;
+  accessToken: string
+  token:[string]
+  svgFiles: string[]; // Array of SVG strings (you can store them as text)
+  canvasPages: Array<{
+    name: string; // Name or title of the canvas page
+    content: string; // Data for the canvas, e.g., serialized JSON or any format
+    createdAt: Date; // Timestamp for when the canvas was created
+  }>;
 }
 
 // Updated User schema
 const UserSchema: Schema<User> = new mongoose.Schema({
-  username: {
+  firstName: {
     type: String,
     required: [true, 'Username is required'],
     trim: true,
-    unique: true,
+  },
+  lastName: {
+    type: String,
+    required: false,
+    trim: true,
   },
   email: {
     type: String,
@@ -42,27 +40,27 @@ const UserSchema: Schema<User> = new mongoose.Schema({
     unique: true,
     match: [/.+\@.+\..+/, 'Please use a valid email address'],
   },
-  password: {
+  accessToken:{
     type: String,
-    required: [true, 'Password is required'],
+    required: true
   },
-  verifyCode: {
-    type: String,
-    required: [true, 'Verify Code is required'],
+  token:{
+    type: [String]
   },
-  verifyCodeExpiry: {
-    type: Date,
-    required: [true, 'Verify Code Expiry is required'],
+  // password: {
+  //   type: String,
+  // },
+  svgFiles: {
+    type: [String], // Array of strings for SVG files
+    default: [], // Default to an empty array
   },
-  isVerified: {
-    type: Boolean,
-    default: false,
-  },
-  isAcceptingMessages: {
-    type: Boolean,
-    default: true,
-  },
-  messages: [MessageSchema],
+  canvasPages: [
+    {
+      name: { type: String, required: true }, // Name of the canvas page
+      content: { type: String, required: true }, // Canvas data in JSON or other formats
+      createdAt: { type: Date, default: Date.now }, // Timestamp
+    },
+  ],
 });
 
 const UserModel =
