@@ -150,8 +150,8 @@ export const processFrame = async (
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
   onGestureDetected: GestureHandler,
-  currentTool: string = 'pencil',
-  currentColor: string = '#FF0000'
+  currentTool: string,
+  currentColor: string
 ) => {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -165,7 +165,8 @@ export const processFrame = async (
     lastY: 0,
     currentShape: null,
     startX: 0,
-    startY: 0
+    startY: 0,
+    shapes: []  // Store all shapes
   };
 
   // Get drawing canvas context
@@ -352,7 +353,7 @@ export const mapGestureToAction = (
   const actions: Record<string, () => GestureAction> = {
     "Thumb_Up": () => ({
       tool: "pencil",
-      action: "select"
+      action: "draw"
     }),
     "Closed_Fist": () => ({
       tool: "rectangle",
@@ -369,10 +370,6 @@ export const mapGestureToAction = (
     "ILoveYou": () => ({
       tool: "triangle",
       action: "draw"
-    }),
-    "Pointing_Up": () => ({
-      tool: "pencil",
-      action: "startDrawing"
     })
   };
 
@@ -382,7 +379,11 @@ export const useGestureControls = (
   setActiveTool: (tool: string) => void,
   handleMouseDown: (e: MouseEvent) => void,
   handleMouseMove: (e: MouseEvent) => void,
-  handleMouseUp: (e: MouseEvent) => void
+  handleMouseUp: (e: MouseEvent) => void,
+  currentTool: string,
+  currentColor: string,
+  setShapes: React.Dispatch<React.SetStateAction<Shape[]>>, // Add setShapes
+  shapes: Shape[] // Add shapes
 ) => {
   const gestureState = {
     isInitialized: false,
@@ -391,6 +392,7 @@ export const useGestureControls = (
     lastGesture: "",
     drawingMode: false
   };
+
 
   const initializeGestureControls = async () => {
     try {
@@ -433,9 +435,29 @@ export const useGestureControls = (
             }
 
             gestureState.lastGesture = gesture;
-          }
+          },
+          currentTool,
+          currentColor
         );
       }
+      const onGestureDetected: GestureHandler = (gesture, handedness, x, y) => {
+        const action = mapGestureToAction(gesture, handedness, x, y);
+        if (action) {
+          setActiveTool(action.tool || "");
+  
+          if (action.action === "draw") {
+            const newShape: Shape = {
+              type: action.tool || "",
+              x1: x,
+              y1: y,
+              x2: x + 50, // Example values, adjust as needed
+              y2: y + 50,
+              color: currentColor
+            };
+            setShapes([...shapes, newShape]); // Update shapes state
+          }
+        }
+      };
     } catch (error) {
       console.error("Error in initializeGestureControls:", error);
     }

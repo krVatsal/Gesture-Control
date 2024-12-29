@@ -1,6 +1,8 @@
 "use client";
 import React, { useState, useRef, useEffect, MouseEvent } from "react";
 import { useGestureControls } from "./gestureControl";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useSession,signOut } from "next-auth/react";
 import {
   FiLock,
   FiMove,
@@ -12,8 +14,8 @@ import {
   FiEdit3,
 } from "react-icons/fi";
 import { TbTextResize, TbPalette, TbEraser,TbPencil } from "react-icons/tb";
+import { CgProfile } from "react-icons/cg";
 import { ChromePicker } from "react-color";
-import { GestureRecognizer, FilesetResolver } from "@mediapipe/tasks-vision";
 type Shape = {
   type: string;
   x?: number;
@@ -87,6 +89,8 @@ const Canvas = React.forwardRef<HTMLCanvasElement>((props, ref) => (
 
 Canvas.displayName = "Canvas";
 
+
+
 const App = () => {
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -101,7 +105,7 @@ const App = () => {
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const [lineWidth, setLineWidth] = useState(2);
   const [currentPath, setCurrentPath] = useState<Point[]>([]);
-  
+  const [showDropdown, setShowDropdown] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -645,20 +649,69 @@ const App = () => {
     setCurrentColor(color.hex);
   };
 
+  const saveShape = (shape: Shape) => {
+    setShapes(prev => [...prev, shape]);
+    setHistory(prev => [...prev, [...shapes, shape]]);
+  };
+
   const { initializeGestureControls } = useGestureControls(
     setActiveTool,
     handleMouseDown,
     handleMouseMove,
-    handleMouseUp
+    handleMouseUp,
+    activeTool,
+    currentColor,
+    saveShape,  // Pass the saveShape function
+    shapes
   );
+  console.log(activeTool, currentColor)
+ 
   
   useEffect(() => {
     initializeGestureControls();
-  }, [])
+  }, [activeTool, currentColor])
+
+ const { data: session, status } = useSession();
+
+  if (status === "loading") {
+    return (
+      <div className="p-4 space-y-4">
+      {/* Skeleton Toolbar */}
+      <div className="flex items-center space-x-4">
+        {/* Tool icons */}
+        {Array(8)
+          .fill(null)
+          .map((_, index) => (
+            <Skeleton
+              key={index}
+              className="w-[40px] h-[40px] rounded-full"
+            />
+          ))}
+        {/* Line width select */}
+        <Skeleton className="w-[120px] h-[40px] rounded" />
+        {/* Profile dropdown */}
+        <div className="ml-auto">
+          <Skeleton className="w-[48px] h-[48px] rounded-full" />
+        </div>
+      </div>
+
+      {/* Skeleton Canvas Area */}
+      <Skeleton className="w-full h-[400px] rounded-lg" />
+
+      {/* Skeleton Hint Text */}
+      <Skeleton className="w-1/2 h-[20px] rounded-full" />
+    </div>
+    );
+  }
+
+  if (!session) {
+    return <p>Please sign in to view this page.</p>;
+  }
 
   return (
   
     <Container>
+      
       <Toolbar>
         <IconButton active={activeTool === "pointer"} onClick={() => handleToolChange("pointer")}>
           <FiMove />
@@ -666,10 +719,9 @@ const App = () => {
         <IconButton active={activeTool === "pencil"} onClick={() => handleToolChange("pencil")}>
           <TbPencil />
         </IconButton>
-        {/* Add line width control for pencil */}
         {activeTool === "pencil" && (
-          <select 
-            value={lineWidth} 
+          <select
+            value={lineWidth}
             onChange={(e) => setLineWidth(Number(e.target.value))}
             className="bg-gray-700 text-white p-2 rounded"
           >
@@ -702,29 +754,51 @@ const App = () => {
         </IconButton>
         {showColorPicker && (
           <div className="absolute z-10 top-16">
-            <div 
-              className="fixed inset-0" 
-              onClick={() => setShowColorPicker(false)}
-            />
+            <div className="fixed inset-0" onClick={() => setShowColorPicker(false)} />
             <div className="relative">
-              <ChromePicker 
-                color={currentColor}
-                onChange={handleColorChange}
-                disableAlpha={true}
-              />
+              <ChromePicker color={currentColor} onChange={handleColorChange} disableAlpha={true} />
             </div>
           </div>
         )}
-        <IconButton onClick={handleUndo}>
-          Undo
-        </IconButton>
+        <IconButton onClick={handleUndo}>Undo</IconButton>
+
+        {/* Profile Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setShowDropdown(!showDropdown)}
+            className="flex items-center space-x-2 p-2 bg-gray-700 rounded-full hover:bg-gray-600"
+          >
+            <CgProfile />
+          </button>
+          {showDropdown && (
+            <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-md z-10">
+              <div className="p-4 text-gray-700">
+                <img
+                  src={session?.user?.image || "/default-avatar.png"}
+                  alt="Profile"
+                  className="w-12 h-12 rounded-full mx-auto"
+                />
+                <p className="text-center font-medium mt-2">{session?.user?.name}</p>
+                <p className="text-center text-sm text-gray-500 truncate">{session?.user?.email}</p>
+              </div>
+              <div className="border-t border-gray-200">
+                <button
+                 onClick={() => signOut({ callbackUrl: "/signin" })} 
+                  className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                >
+                  Log Out
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </Toolbar>
+
       <CanvasArea>
         <Canvas ref={canvasRef} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} />
         <HintText>Press 'Undo' to revert the last action.</HintText>
       </CanvasArea>
     </Container>
-    
   );
 };
 

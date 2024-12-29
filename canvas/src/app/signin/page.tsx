@@ -22,7 +22,7 @@ const SignInPage = () => {
         <div className="mt-8">
 {/* <a href="/api/google"> */}
           <button
-              type="submit" name="action" value="google" onClick={()=>signIn}
+              type="submit" name="action" value="google"   onClick={() => signIn("google",{ callbackUrl: "/" })}
             className="w-full bg-white border border-gray-300 rounded-lg px-4 py-3 flex items-center justify-center space-x-2 hover:bg-gray-50 transition-colors duration-200"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -63,15 +63,5 @@ const SignInPage = () => {
   );
 }
 
-// export async function getServerSideProps({ req, res }) {
-//   try {
-//     const cookieExists = getCookie("token", { req, res });
-//     console.log(cookieExists);
-//     if (cookieExists) return { redirect: { destination: "/dashboard" } };
-//     return { props: {} };
-//   } catch (err) {
-//     return { props: {} };
-//   }
-// }
 
 export default SignInPage;
