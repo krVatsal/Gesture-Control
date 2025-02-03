@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef, useEffect, MouseEvent } from "react";
+import React, { useState, useRef,useMemo ,useEffect, MouseEvent } from "react";
 import { useGestureControls } from "./gestureControl";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession,signOut } from "next-auth/react";
@@ -16,6 +16,7 @@ import {
 import { TbTextResize, TbPalette, TbEraser,TbPencil } from "react-icons/tb";
 import { CgProfile } from "react-icons/cg";
 import { ChromePicker } from "react-color";
+import { useRouter } from "next/navigation";
 type Shape = {
   type: string;
   x?: number;
@@ -89,9 +90,52 @@ const Canvas = React.forwardRef<HTMLCanvasElement>((props, ref) => (
 
 Canvas.displayName = "Canvas";
 
+const useAutoSave = (shapes: Shape[], session: any) => {
+  useEffect(() => {
+    const saveCanvas = async () => {
+      if (session?.user && shapes.length > 0) {
+        try {
+          const response = await fetch(`/api/canvas/save?userEmail=${session.user.email}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shapes })
+          });
+          const res = await response.json();
+          if (response.status !== 200) {
+            throw new Error(res.message || "Failed to save canvas");
+          }
+        } catch (error) {
+          console.error("Failed to save canvas:", error);
+        }
+      }
+    };
 
+    const timer = setTimeout(saveCanvas, 5000);
+    return () => clearTimeout(timer);
+  }, [shapes, session]);
+};
+
+const useLoadCanvas = (session: any, setShapes: (shapes: Shape[]) => void) => {
+  useEffect(() => {
+    const loadCanvas = async () => {
+      if (session?.user) {
+        try {
+          const response = await fetch(`/api/canvas/loader?userEmail=${session.user.email}`);
+          const data = await response.json();
+          if (data.status !== 200) throw new Error("Failed to load canvas");
+          setShapes(data.canvas.shapes);
+        } catch (error) {
+          console.error("Failed to load canvas:", error);
+        }
+      }
+    };
+
+    loadCanvas();
+  }, [session, setShapes]);
+};
 
 const App = () => {
+  const router= useRouter()
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -106,7 +150,8 @@ const App = () => {
   const [lineWidth, setLineWidth] = useState(2);
   const [currentPath, setCurrentPath] = useState<Point[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
-
+  const { data: session, status } = useSession();
+  const memoizedValues = React.useMemo(() =>({ shapes,session}), [shapes,session])
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas) {
@@ -119,6 +164,8 @@ const App = () => {
       }
     }
   }, [shapes, currentColor]);
+  useAutoSave(shapes, session);
+  useLoadCanvas(session, setShapes);
 
    // Add shapes to history when they change
    useEffect(() => {
@@ -661,7 +708,7 @@ const App = () => {
     handleMouseUp,
     activeTool,
     currentColor,
-    saveShape,  // Pass the saveShape function
+    saveShape, 
     shapes
   );
   console.log(activeTool, currentColor)
@@ -671,7 +718,6 @@ const App = () => {
     initializeGestureControls();
   }, [activeTool, currentColor])
 
- const { data: session, status } = useSession();
 
   if (status === "loading") {
     return (
@@ -705,8 +751,10 @@ const App = () => {
   }
 
   if (!session) {
+    router.push('/signin')
     return <p>Please sign in to view this page.</p>;
   }
+
 
   return (
   

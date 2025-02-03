@@ -151,7 +151,8 @@ export const processFrame = async (
   canvas: HTMLCanvasElement,
   onGestureDetected: GestureHandler,
   currentTool: string,
-  currentColor: string
+  currentColor: string,
+  saveShape: (shape: Shape) => void  // Add saveShape parameter
 ) => {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -294,7 +295,11 @@ export const processFrame = async (
           if (label) label.textContent = `Drawing Mode: ON (${currentTool})`;
         } else if (gesture === "Open_Palm" && drawingState.isDrawing) {
           drawingState.isDrawing = false;
-          drawingState.currentShape = null;
+          if (drawingState.currentShape) {
+            // Save the completed shape
+            saveShape(drawingState.currentShape);
+            drawingState.currentShape = null;
+          }
           if (label) label.textContent = "Drawing Mode: OFF";
         }
 
@@ -382,15 +387,39 @@ export const useGestureControls = (
   handleMouseUp: (e: MouseEvent) => void,
   currentTool: string,
   currentColor: string,
-  setShapes: React.Dispatch<React.SetStateAction<Shape[]>>, // Add setShapes
-  shapes: Shape[] // Add shapes
+  saveShape: (shape: Shape) => void,
+  shapes: Shape[]
 ) => {
   const gestureState = {
+    // Initialization states
     isInitialized: false,
     gestureRecognizer: null as GestureRecognizer | null,
     videoElement: null as HTMLVideoElement | null,
+    
+    // Drawing states
+    drawingMode: false,
+    isDrawing: false,
+    isDragging: false,
+    
+    // Position tracking
+    startPos: { x: 0, y: 0 },
+    lastPos: { x: 0, y: 0 },
+    
+    // Shape tracking
+    currentShape: null as Shape | null,
+    currentPath: [] as Point[],
+    
+    // Tool states
     lastGesture: "",
-    drawingMode: false
+    currentTool: "",
+    currentColor: "",
+    
+    // Parameters
+    lineWidth: 2,
+    params: {
+      activeTool: "",
+      currentColor: ""
+    }
   };
 
 
@@ -413,31 +442,59 @@ export const useGestureControls = (
             
             const action = mapGestureToAction(gesture, handedness, x, y);
             if (!action) return;
-
+      
             if (action.tool) {
               setActiveTool(action.tool);
             }
-
+      
             const eventInit = {
               clientX: x,
               clientY: y,
               bubbles: true
             };
-
+      
+            // Start drawing with closed fist
             if (gesture === "Closed_Fist" && !gestureState.drawingMode) {
               gestureState.drawingMode = true;
+              gestureState.startPos = { x, y };
               handleMouseDown(new MouseEvent("mousedown", eventInit));
-            } else if (gesture === "Open_Palm" && gestureState.drawingMode) {
+            } 
+            // Continue drawing while moving
+            else if (gestureState.drawingMode) {
+              handleMouseMove(new MouseEvent("mousemove", eventInit));
+              
+              // Update current shape based on tool
+              if (!gestureState.currentShape) {
+                gestureState.currentShape = {
+                  type: action.tool || currentTool,
+                  x1: gestureState.startPos.x,
+                  y1: gestureState.startPos.y,
+                  color: currentColor,
+                  points: action.tool === 'pencil' ? [{ x, y }] : undefined
+                };
+              } else if (action.tool === 'pencil' && gestureState.currentShape.points) {
+                gestureState.currentShape.points.push({ x, y });
+              } else {
+                gestureState.currentShape.x2 = x;
+                gestureState.currentShape.y2 = y;
+              }
+            }
+            // End drawing with open palm
+            else if (gesture === "Open_Palm" && gestureState.drawingMode) {
               gestureState.drawingMode = false;
               handleMouseUp(new MouseEvent("mouseup", eventInit));
-            } else if (gestureState.drawingMode) {
-              handleMouseMove(new MouseEvent("mousemove", eventInit));
+              
+              if (gestureState.currentShape) {
+                saveShape(gestureState.currentShape);
+                gestureState.currentShape = null;
+              }
             }
-
+      
             gestureState.lastGesture = gesture;
           },
           currentTool,
-          currentColor
+          currentColor,
+          saveShape
         );
       }
       const onGestureDetected: GestureHandler = (gesture, handedness, x, y) => {

@@ -14,12 +14,29 @@ export interface User extends Document {
   // password: string;
   accessToken: string
   token:[string]
-  svgFiles: string[]; // Array of SVG strings (you can store them as text)
+  shapes: Shape[]
   canvasPages: Array<{
     name: string; // Name or title of the canvas page
     content: string; // Data for the canvas, e.g., serialized JSON or any format
     createdAt: Date; // Timestamp for when the canvas was created
   }>;
+}
+interface Shape {
+  type: string;
+  points?: { x: number; y: number }[];
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  radius?: number;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+  x3?: number;
+  y3?: number;
+  text?: string;
+  color?: string;
 }
 
 // Updated User schema
@@ -47,13 +64,6 @@ const UserSchema: Schema<User> = new mongoose.Schema({
   token:{
     type: [String]
   },
-  // password: {
-  //   type: String,
-  // },
-  svgFiles: {
-    type: [String], // Array of strings for SVG files
-    default: [], // Default to an empty array
-  },
   canvasPages: [
     {
       name: { type: String, required: true }, // Name of the canvas page
@@ -61,6 +71,29 @@ const UserSchema: Schema<User> = new mongoose.Schema({
       createdAt: { type: Date, default: Date.now }, // Timestamp
     },
   ],
+  shapes: [{
+    type: {
+      type: String,
+      required: true
+    },
+    points: [{
+      x: Number,
+      y: Number
+    }],
+    x: Number,
+    y: Number,
+    width: Number,
+    height: Number,
+    radius: Number,
+    x1: Number,
+    y1: Number,
+    x2: Number,
+    y2: Number,
+    x3: Number,
+    y3: Number,
+    text: String,
+    color: String
+  }],
 });
 
 const UserModel =
